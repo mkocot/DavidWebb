@@ -42,12 +42,14 @@ public class Request {
     boolean compress;
     int retryCount;
     boolean waitExponential;
+    int maxRedirectionDepth;
 
     Request(Webb webb, Method method, String uri) {
         this.webb = webb;
         this.method = method;
         this.uri = uri;
         this.followRedirects = webb.followRedirects;
+        this.maxRedirectionDepth = webb.maxRedirectionDepth;
     }
 
     /**
@@ -363,6 +365,26 @@ public class Request {
         }
         this.retryCount = retryCount;
         this.waitExponential = waitExponential;
+        return this;
+    }
+
+    /**
+     * Set number of consecutive redirects during request.
+     *
+     * @param maxDepth This defines maximum allowed redirection depth for request. Has no use
+     *                 when {@link #followRedirects(boolean)} is set to false or disabled globally
+     *                 using {@link Webb#setFollowRedirects(boolean)}.</br>
+     *
+     *                 Minimal valid value is 1 - direct request to server
+     *
+     *                 Values <= 0 will throw {@link IllegalArgumentException}
+     * @return <code>this</code> for method chaining (fluent API)
+     */
+    public Request maxRedirectionsDepth(int maxDepth) {
+        if (maxDepth <= 0) {
+            throw new IllegalArgumentException("maxDepth <= 0");
+        }
+        maxRedirectionDepth = maxDepth;
         return this;
     }
 

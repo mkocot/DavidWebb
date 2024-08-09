@@ -14,10 +14,12 @@ class Const {
     static final String HDR_ACCEPT_ENCODING = "Accept-Encoding";
     static final String HDR_ACCEPT = "Accept";
     static final String HDR_USER_AGENT = "User-Agent";
+    static final String HDR_LOCATION = "Location";
     static final String UTF8 = "utf-8";
 
     static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
     static final Class BYTE_ARRAY_CLASS = EMPTY_BYTE_ARRAY.getClass();
     /** Minimal number of bytes the compressed content must be smaller than uncompressed */
     static final int MIN_COMPRESSED_ADVANTAGE = 80;
+    static final int MAX_REDIRECTION_DEPTH = 5;
 }
