@@ -15,6 +15,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.Proxy;
 import java.net.URL;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -86,6 +87,15 @@ public class Webb {
     }
 
     /**
+     * Get currently set GLOBAL headers.
+     *
+     * @return Map of currently used GLOBAL headers. Values can never be <code>null</code>.
+     */
+    public static Map<String, Object> getGlobalHeaders() {
+        return Collections.unmodifiableMap(globalHeaders);
+    }
+
+    /**
      * Set the base URI for all requests starting in this JVM from now.
      * <br>
      * For all requests this value is taken as a kind of prefix for the effective URI, so you can address
@@ -100,13 +110,31 @@ public class Webb {
     }
 
     /**
+     * Get the GLOBAL base URI for all requests starting in this JVM from now.
+     *
+     * @return GLOBAL base uri or <code>null</code> if not set.
+     */
+    public static String getGlobalBaseUri() {
+        return globalBaseUri;
+    }
+
+    /**
      * The number of characters to indent child properties, <code>-1</code> for "productive" code.
      * <br>
      * Default is production ready JSON (-1) means no indentation (single-line serialization).
      * @param indentFactor the number of spaces to indent
      */
     public static void setJsonIndentFactor(int indentFactor) {
-        Webb.jsonIndentFactor = indentFactor;
+        Webb.jsonIndentFactor = Math.max(-1, indentFactor);
+    }
+
+    /**
+     * Getter for {@link #setJsonIndentFactor(int)}.
+     *
+     * @return number of spaces to indent
+     */
+    public static int getJsonIndentFactor() {
+        return jsonIndentFactor;
     }
 
     /**
@@ -122,6 +150,15 @@ public class Webb {
     }
 
     /**
+     * Getter for {@link #setConnectTimeout(int)}.
+     *
+     * @return See {@link #setConnectTimeout(int)}.
+     */
+    public static int getConnectTimeout() {
+        return connectTimeout;
+    }
+
+    /**
      * Set the timeout in milliseconds for getting response from the server.
      * <br>
      * In contrast to {@link java.net.HttpURLConnection}, we use a default timeout of 3 minutes, since no
@@ -131,6 +168,15 @@ public class Webb {
      */
     public static void setReadTimeout(int globalReadTimeout) {
         readTimeout = globalReadTimeout > 0 ? globalReadTimeout : null;
+    }
+
+    /**
+     * Getter for {@link #setReadTimeout(int)}.
+     *
+     * @return See {@link #setReadTimeout(int)}.
+     */
+    public static int getReadTimeout() {
+        return readTimeout;
     }
 
     /**
@@ -147,11 +193,34 @@ public class Webb {
     }
 
     /**
+     * Get configuration for following redirects. See {@link #setFollowRedirects(boolean)} for more.
+     *
+     * @return true if following redirects should be allowed
+     */
+    public boolean getFollowRedirects() {
+        if (followRedirects == null) {
+            return HttpURLConnection.getFollowRedirects();
+        }
+
+        return followRedirects;
+    }
+
+    /**
      * Set a custom {@link javax.net.ssl.SSLSocketFactory}, most likely to relax Certification checking.
      * @param sslSocketFactory the factory to use (see test cases for an example).
      */
     public void setSSLSocketFactory(SSLSocketFactory sslSocketFactory) {
         this.sslSocketFactory = sslSocketFactory;
+    }
+
+    /**
+     * Get currently used {@link SSLSocketFactory}.
+     * See {@link #setSSLSocketFactory(SSLSocketFactory)} for details.
+     *
+     * @return See {@link #setSSLSocketFactory(SSLSocketFactory)}.
+     */
+    public SSLSocketFactory getSSLSocketFactory() {
+        return this.sslSocketFactory;
     }
 
     /**
@@ -163,12 +232,30 @@ public class Webb {
     }
 
     /**
+     * Getter for {@link #setHostnameVerifier(HostnameVerifier)}.
+     *
+     * @return See {@link #setHostnameVerifier(HostnameVerifier)}
+     */
+    public HostnameVerifier getHostnameVerifier() {
+        return hostnameVerifier;
+    }
+
+    /**
      * Sets a proxy object to be used for opening the connection.
      * See {@link URL#openConnection(Proxy)}
      * @param proxy the proxy to be used or <tt>null</tt> for no proxy.
      */
     public void setProxy(Proxy proxy) {
         this.proxy = proxy;
+    }
+
+    /**
+     * Getter for {@link #setProxy(Proxy)}.
+     *
+     * @return See {@link #setProxy(Proxy)}.
+     */
+    public Proxy getProxy() {
+        return proxy;
     }
 
     /**
@@ -220,11 +307,33 @@ public class Webb {
     }
 
     /**
+     * Get currently set default headers.
+     *
+     * @return Map containing set headers. This values is never <code>null</code>.
+     */
+    public Map<String, Object> getDefaultHeaders() {
+        if (defaultHeaders == null) {
+            return Collections.emptyMap();
+        }
+
+        return Collections.unmodifiableMap(defaultHeaders);
+    }
+
+    /**
      * Registers an alternative {@link com.goebl.david.RetryManager}.
      * @param retryManager the new manager for deciding whether it makes sense to retry a request.
      */
     public void setRetryManager(RetryManager retryManager) {
         this.retryManager = retryManager;
+    }
+
+    /**
+     * Getter for {@link #setRetryManager(RetryManager)}.
+     *
+     * @return See {@link #setRetryManager(RetryManager)}.
+     */
+    public RetryManager getRetryManager() {
+        return retryManager;
     }
 
     /**
@@ -244,7 +353,7 @@ public class Webb {
      * @return the created Request object (in fact it's more a builder than a real request object)
      */
     public Request post(String pathOrUri) {
-        return new Request(this, Request.Method.POST, buildPath(pathOrUri));
+        return create(Request.Method.POST, pathOrUri);
     }
 
     /**
@@ -254,7 +363,7 @@ public class Webb {
      * @return the created Request object (in fact it's more a builder than a real request object)
      */
     public Request put(String pathOrUri) {
-        return new Request(this, Request.Method.PUT, buildPath(pathOrUri));
+        return create(Request.Method.PUT, pathOrUri);
     }
 
     /**
@@ -264,7 +373,20 @@ public class Webb {
      * @return the created Request object (in fact it's more a builder than a real request object)
      */
     public Request delete(String pathOrUri) {
-        return new Request(this, Request.Method.DELETE, buildPath(pathOrUri));
+        return create(Request.Method.DELETE, pathOrUri);
+    }
+
+    /**
+     * Create HTTP request. For usege see {@link #get(String)}, {@link #post(String)},
+     * {@link #put(String)}, {@link #delete(String)}.
+     *
+     * @param method Method for HTTP request.
+     * @param pathOrUri the URI (will be concatenated with global URI or default URI without further checking)
+     *                  If it starts already with http:// or https:// this URI is taken and all base URIs are ignored.
+     * @return the created Request object (in fact it's more a builder than a real request object)
+     */
+    public Request create(Request.Method method, String pathOrUri) {
+        return new Request(this, method, buildPath(pathOrUri));
     }
 
     private String buildPath(String pathOrUri) {
