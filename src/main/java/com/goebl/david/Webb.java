@@ -1,24 +1,26 @@
 package com.goebl.david;
 
-import java.io.FilterInputStream;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import javax.net.ssl.HostnameVerifier;
-import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SSLSocketFactory;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.Proxy;
+import java.net.URI;
 import java.net.URL;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.zip.GZIPOutputStream;
+
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLSocketFactory;
 
 /**
  * Lightweight Java HTTP-Client for calling JSON REST-Services (especially for Android).
@@ -37,6 +39,9 @@ public class Webb {
     public static final String HDR_ACCEPT_ENCODING = Const.HDR_ACCEPT_ENCODING;
     public static final String HDR_USER_AGENT = Const.HDR_USER_AGENT;
     public static final String HDR_AUTHORIZATION = "Authorization";
+    public static final String HDR_LOCATION = Const.HDR_LOCATION;
+    public static final int HTTP_PERMANENT_REDIRECT = 308;
+
 
     static final Map<String, Object> globalHeaders = new LinkedHashMap<String, Object>();
     static String globalBaseUri;
@@ -52,6 +57,7 @@ public class Webb {
     HostnameVerifier hostnameVerifier;
     RetryManager retryManager;
     Proxy proxy;
+    int maxRedirectionDepth = Const.MAX_REDIRECTION_DEPTH;
 
     protected Webb() {}
 
@@ -322,53 +328,40 @@ public class Webb {
         boolean closeStream = true;
         HttpURLConnection connection = null;
 
+        int maxDepth = Math.max(1, request.maxRedirectionDepth);
+
         try {
-            String uri = request.uri;
-            if (request.method == Request.Method.GET &&
-                    !uri.contains("?") &&
-                    request.params != null &&
-                    !request.params.isEmpty()) {
-                uri += "?" + WebbUtils.queryString(request.params);
-            }
-            URL apiUrl = new URL(uri);
-            if (proxy != null) {
-                connection = (HttpURLConnection) apiUrl.openConnection(proxy);
-            } else {
-                connection = (HttpURLConnection) apiUrl.openConnection();
-            }
+            String baseRequestUri = request.uri;
 
-            prepareSslConnection(connection);
-            connection.setRequestMethod(request.method.name());
-            if (request.followRedirects != null) {
-                connection.setInstanceFollowRedirects(request.followRedirects);
-            }
-            connection.setUseCaches(request.useCaches);
-            setTimeouts(request, connection);
-            if (request.ifModifiedSince != null) {
-                connection.setIfModifiedSince(request.ifModifiedSince);
-            }
-
-            WebbUtils.addRequestProperties(connection, mergeHeaders(request.headers));
-            if (clazz == JSONObject.class || clazz == JSONArray.class) {
-                WebbUtils.ensureRequestProperty(connection, HDR_ACCEPT, APP_JSON);
-            }
-
-            if (request.method != Request.Method.GET && request.method != Request.Method.DELETE) {
-                if (request.streamPayload) {
-                    WebbUtils.setContentTypeAndLengthForStreaming(connection, request, request.compress);
-                    connection.setDoOutput(true);
-                    streamBody(connection, request.payload, request.compress);
-                } else {
-                    byte[] requestBody = WebbUtils.getPayloadAsBytesAndSetContentType(
-                            connection, request, request.compress, jsonIndentFactor);
-
-                    if (requestBody != null) {
-                        connection.setDoOutput(true);
-                        writeBody(connection, requestBody);
-                    }
+            for (int i = 0; i < maxDepth; ++i) {
+                if (i > 0) {
+                    // this could only happen during redirection handling
+                    // close current connection and try again with new location
+                    try { connection.disconnect(); } catch (Exception ignore) {}
                 }
-            } else {
-                connection.connect();
+
+                connection = setupConnection(baseRequestUri, request, clazz);
+
+                // support redirection disabled, move on
+                if (!connection.getInstanceFollowRedirects()) {
+                    break;
+                }
+
+                // handle redirection only for well-known http codes
+                if (!isRedirectRequest(connection.getResponseCode())) {
+                    break;
+                }
+
+                // redirection handling
+
+                final String location = connection.getHeaderField(HDR_LOCATION);
+                if (location == null) {
+                    break;
+                }
+
+                // resolve next target using current and next location,
+                // params are going to be added later
+                baseRequestUri = URI.create(baseRequestUri).resolve(location).toString();
             }
 
             response.connection = connection;
@@ -410,6 +403,101 @@ public class Webb {
                     try { connection.disconnect(); } catch (Exception ignored) {}
                 }
             }
+        }
+    }
+
+    private static boolean isRedirectRequest(final int statusCode) {
+        switch (statusCode) {
+            case HttpURLConnection.HTTP_SEE_OTHER:
+            case HttpURLConnection.HTTP_MOVED_PERM:
+            case HttpURLConnection.HTTP_MOVED_TEMP:
+            case HTTP_PERMANENT_REDIRECT:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private <T> HttpURLConnection setupConnection(String uri, Request request, Class<T> clazz) throws WebbException {
+        if (uri == null || uri.length() == 0) {
+            throw new IllegalArgumentException("invalid uri, null or empty");
+        }
+
+        if (request == null) {
+            throw new IllegalArgumentException("request is null");
+        }
+
+        if (clazz == null) {
+            throw new IllegalArgumentException("clazz is null");
+        }
+
+        if (request.method == Request.Method.GET &&
+                !uri.contains("?") &&
+                request.params != null &&
+                !request.params.isEmpty()) {
+            uri += "?" + WebbUtils.queryString(request.params);
+        }
+
+        final URL apiUrl;
+
+        try {
+            apiUrl = new URL(uri);
+        } catch (Exception e) {
+            throw new WebbException(e);
+        }
+
+        final HttpURLConnection connection;
+
+        try {
+            if (proxy != null) {
+                connection = (HttpURLConnection) apiUrl.openConnection(proxy);
+            } else {
+                connection = (HttpURLConnection) apiUrl.openConnection();
+            }
+        } catch (Exception e) {
+            throw new WebbException(e);
+        }
+
+        try {
+            prepareSslConnection(connection);
+            connection.setRequestMethod(request.method.name());
+            if (request.followRedirects != null) {
+                connection.setInstanceFollowRedirects(request.followRedirects);
+            }
+            connection.setUseCaches(request.useCaches);
+            setTimeouts(request, connection);
+            if (request.ifModifiedSince != null) {
+                connection.setIfModifiedSince(request.ifModifiedSince);
+            }
+
+            WebbUtils.addRequestProperties(connection, mergeHeaders(request.headers));
+            if (clazz == JSONObject.class || clazz == JSONArray.class) {
+                WebbUtils.ensureRequestProperty(connection, HDR_ACCEPT, APP_JSON);
+            }
+
+            if (request.method != Request.Method.GET && request.method != Request.Method.DELETE) {
+                if (request.streamPayload) {
+                    WebbUtils.setContentTypeAndLengthForStreaming(connection, request, request.compress);
+                    connection.setDoOutput(true);
+                    streamBody(connection, request.payload, request.compress);
+                } else {
+                    byte[] requestBody = WebbUtils.getPayloadAsBytesAndSetContentType(
+                            connection, request, request.compress, jsonIndentFactor);
+
+                    if (requestBody != null) {
+                        connection.setDoOutput(true);
+                        writeBody(connection, requestBody);
+                    }
+                }
+            } else {
+                connection.connect();
+            }
+
+            return connection;
+        } catch (Exception e) {
+            try { connection.disconnect(); } catch (Exception ignore) {}
+
+            throw new WebbException(e);
         }
     }
 
